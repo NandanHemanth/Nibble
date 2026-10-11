@@ -800,7 +800,7 @@ async def stores(zip_code: str) -> dict:
 _ROUTE_HINTS = (
     ("season", r"\b(in season|seasonal|season)\b"),
     ("invest", r"\b(invest\w*|stocks?|shares|portfolio|etfs?|markets?|sectors?|exposed)\b"),
-    ("learn", r"\b(teach|learn|flashcards?|explain|what is|what are|what does .* mean|how does|how do)\b"),
+    ("learn", r"\b(teach|learn|flashcards?|explain|understand|deep.?dive|what is|what are|what does .* mean|how does|how do|how (is|are) .* prices?|how .* prices? (is|are))\b"),
     ("why", r"^\s*why\b"),
 )
 
@@ -1037,7 +1037,7 @@ async def lesson(headline: dict, zip_code: str, effort: str | None = None, on_st
                       for s in (c.get("how_it_spreads") or [])[:4] if s.get("step")],
             "affected": (c.get("who_is_affected") or [])[:4],
             "expected": (c.get("what_is_expected") or [])[:4],
-            "could_change": [str(x)[:260] for x in (c.get("what_could_change_it") or [])[:3]],
+            "could_change": [str(x)[:260] for x in (c.get("what_could_change_it") or [])[:3] if _real(x)],
             "what_to_watch": c.get("what_to_watch") or "",
             "concepts": (c.get("concepts") or [])[:4],
             "trust": {"confidence": trust.get("confidence"), "sources": len(trust.get("sources") or [])},
@@ -1083,4 +1083,187 @@ async def lesson(headline: dict, zip_code: str, effort: str | None = None, on_st
                     link["lat"], link["lng"], link["place"] = guess.latitude, guess.longitude, guess.place
         if result["what_happened"]:
             cache_put("lesson", key, result)
+        return {**result, "home": home}
+
+
+# ------------------------------------------------------------- Topic Guide
+
+_STR = {"type": "string"}
+# Two smaller schemas, run side by side. In testing, one large schema at low effort came back with
+# required fields missing or empty; each half on its own came back complete.
+GUIDE_BASICS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "description": "A short title for the guide, at most 8 words"},
+        "in_one_line": {"type": "string", "description": "The whole story in one plain sentence"},
+        "what_it_is": {"type": "string", "description": "3 to 4 plain sentences explaining the thing itself to someone who has never heard of it"},
+        "background": {"type": "array", "description": "4 to 6 dated events that led to the situation today, oldest first",
+                       "items": {"type": "object", "properties": {
+                           "when": {"type": "string", "description": "Year, or month and year"},
+                           "what": {"type": "string", "description": "One plain sentence"}}, "required": ["when", "what"]}},
+        "how_it_works": {"type": "array", "description": "3 to 5 stages of the supply chain or mechanism, in order",
+                         "items": {"type": "object", "properties": {
+                             "stage": {"type": "string", "description": "Name of this stage, 2 to 4 words"},
+                             "who": {"type": "string", "description": "The main companies or countries at this stage"},
+                             "place": {"type": "string", "description": "One real city, region or country a map can find, e.g. 'Hsinchu, Taiwan'"},
+                             "detail": {"type": "string", "description": "One or two plain sentences on what happens here and why it matters for price"}},
+                             "required": ["stage", "who", "place", "detail"]}},
+        "happening_now": {"type": "string", "description": "3 sentences on what is happening right now, with numbers and dates"},
+    },
+    "required": ["title", "in_one_line", "what_it_is", "background", "how_it_works", "happening_now"],
+}
+_NO_ADVICE = ("Use plain words and explain every finance term. Report forecasts only as published by a named source, with their "
+              "numbers and dates. You teach how to understand a topic. You never say what to buy, sell or hold, and you never "
+              "make your own price predictions.")
+GUIDE_BASICS_SKILL = (
+    "You are a patient teacher writing a beginner's guide to one money topic from current world news. Explain from zero: "
+    "what the thing is, the history that led here, how it works step by step and where on Earth each step happens, and "
+    "what is happening now with numbers and dates. " + _NO_ADVICE)
+GUIDE_SOURCES = (
+    "Government agencies and statistics, industry associations, company filings and earnings calls, major wire "
+    "services and national newspapers. Avoid blogs, aggregators and stock-tip sites."
+)
+_VAGUE_PLACE = re.compile(r"\b(global(ly)?|worldwide|mostly|mainly|primarily|heavily|concentrated|in|the|and other .*|various .*)\b", re.I)
+_TICKER = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
+
+
+async def _guide_part(task: str, agent_name: str, schema: dict, skill: str, effort: str, on_status=None) -> dict:
+    """One research run, tried a second time if Nimble reports the run failed."""
+    last: Exception | None = None
+    for _ in (1, 2):
+        try:
+            run = await nimble.agent_start(task, agent_name, schema, skill, GUIDE_SOURCES, effort)
+            out = await nimble.agent_wait(run["run_id"], run["agent_id"], agent_name, on_status=on_status)
+            if isinstance(out.get("content"), dict):
+                return out
+            last = RuntimeError("the agent did not return structured output")
+        except Exception as exc:
+            last = exc
+    assert last is not None
+    raise last
+
+
+_JUNK = re.compile(r"not the final answer|mid-stream|invalid text|^(null|none|n/?a|undefined)$", re.I)
+
+
+def _real(text) -> bool:
+    """False for the filler an agent sometimes leaves in a field it could not fill."""
+    return isinstance(text, str) and len(text.strip()) > 2 and not _JUNK.search(text.strip())
+
+
+# Wire services, business press, regulators and statistics agencies. Two of the three lookups are
+# limited to these with Nimble's include_domains, the pattern Nimble's finance cookbook uses.
+TRUSTED_DOMAINS = ["reuters.com", "apnews.com", "cnbc.com", "bloomberg.com", "ft.com", "wsj.com", "sec.gov",
+                   "federalreserve.gov", "bls.gov", "bea.gov", "eia.gov", "usda.gov", "imf.org", "worldbank.org", "oecd.org"]
+# (question, limit to trusted domains?)
+_GUIDE_QUESTIONS = (
+    ("What are the main factors moving prices for {topic}, and which companies are most involved?", True),
+    ("What do analysts, agencies or companies forecast for {topic} over the next year? Name the sources, numbers and dates.", True),
+    ("What should a beginner understand before investing in {topic}: how companies make money, the cycle, and the main risks?", False),
+)
+
+
+async def guide(topic: str, zip_code: str, effort: str | None = None, on_status=None) -> dict:
+    """A deep-dive guide to one topic.
+
+    The basics (what it is, how we got here, how it works and where, what is happening now) come from a
+    Nimble Web Search Agent with per-field citations. The investing view (what moves the price, the main
+    companies, what to understand, what named sources expect) is written by the model from three Nimble
+    Answer lookups run at the same time. A low-effort agent run with the whole schema, and one with only
+    the investing half, both came back with required fields empty or filled with filler, so that half is
+    not asked of the agent."""
+    topic = topic.strip()[:200]
+    effort = effort or config.AGENT_EFFORT
+    home = await world.locate_zip(zip_code)
+    with obs.agent_span("Topic Guide", f"Deep dive: {topic}"):
+        if not config.NIMBLE_LIVE:
+            return {**demo.guide_for(topic), "home": home}
+        key = f"{topic.lower()}|{effort}"
+        cached = cache_get("guide", key, 6 * 3600)
+        if cached:
+            return {**cached, "home": home, "cached": True}
+        started = time.time()
+
+        async def lookup(question: str, trusted: bool) -> dict:
+            empty = {"question": question, "answer": "", "citations": [], "snippets": [], "trusted_only": False}
+            for domains in ([TRUSTED_DOMAINS, None] if trusted else [None]):
+                try:
+                    found = await nimble.answer(question, "Topic Guide", domains, "standard" if domains else None)
+                except Exception as exc:
+                    obs.capture(exc)
+                    continue
+                if _real(found.get("answer")):
+                    return {"question": question, **found, "trusted_only": bool(domains)}
+            return empty
+
+        basics, *research = await asyncio.gather(
+            _guide_part(
+                f"Explain this topic from zero for a beginner learning to invest.\nTopic: {topic}\n\n"
+                "Cover what it is, the dated background that led here, how the supply chain works stage by stage and "
+                "where each stage happens, and what is happening right now.",
+                "nibble-topic-basics", GUIDE_BASICS_SCHEMA, GUIDE_BASICS_SKILL, effort, on_status),
+            *[lookup(q.format(topic=topic), trusted) for q, trusted in _GUIDE_QUESTIONS])
+        research = [r for r in research if _real(r.get("answer"))]
+        c = basics["content"]
+        trust = basics.get("trust") or {}
+
+        def rows(name: str, limit: int) -> list[dict]:
+            return [dict(r) for r in (c.get(name) or [])[:limit] if isinstance(r, dict)]
+
+        seen: set[str] = set()
+        sources = []
+        for src in [*(trust.get("sources") or []), *[cite for r in research for cite in r["citations"]]]:
+            if isinstance(src, dict) and src.get("url") and src["url"] not in seen:
+                seen.add(src["url"])
+                sources.append({"url": src["url"], "title": src.get("title") or src["url"]})
+        result = {
+            "sample": False, "topic": topic, "title": c.get("title") if _real(c.get("title")) else topic,
+            "in_one_line": c.get("in_one_line") if _real(c.get("in_one_line")) else "",
+            "what_it_is": c.get("what_it_is") if _real(c.get("what_it_is")) else "",
+            "background": [b for b in rows("background", 6) if _real(b.get("what"))],
+            "stages": [st for st in rows("how_it_works", 5) if _real(st.get("detail"))],
+            "happening_now": c.get("happening_now") if _real(c.get("happening_now")) else "",
+            "things_to_know": [], "price_drivers": [], "key_players": [], "numbers": [], "expected": [], "mistakes": [],
+            "research": [{"question": r["question"], "answer": r["answer"], "citations": r["citations"],
+                          "trusted_only": r["trusted_only"]} for r in research],
+            "written_by": None, "quiz": [], "notes": [],
+            "sources": sources[:14],
+            "trust": {"confidence": trust.get("confidence"), "sources": len(sources)},
+            "seconds": 0, "effort": effort,
+        }
+        for field, key_name in (("background", "background"), ("stages", "how_it_works")):
+            for i, extra in _cites_by_index(trust, key_name).items():
+                if i < len(result[field]):
+                    result[field][i].update(extra)
+        for st in result["stages"]:
+            # "Global, mostly United States" -> "United States"; then look the place up.
+            name = re.sub(r"\s+", " ", _VAGUE_PLACE.sub(" ", st.get("place") or "")).strip(" ,;.")
+            spot = await world.geocode(name) if 2 < len(name) < 80 else None
+            st["lat"], st["lng"] = spot if spot else (None, None)
+
+        if config.llm_live() and result["what_it_is"]:
+            try:
+                view = await gemini.guide_investing(topic, result, research)
+                result["things_to_know"] = [x[:360] for x in view.things_to_know[:6] if _real(x)]
+                result["price_drivers"] = [d.model_dump() for d in view.price_drivers[:5] if _real(d.driver) and _real(d.explanation)]
+                result["key_players"] = [{"name": k.name, "role": k.role, "exchange": None,
+                                          "ticker": k.ticker.strip().upper() if _TICKER.match(k.ticker.strip().upper()) else None}
+                                         for k in view.key_players[:6] if _real(k.name)]
+                result["numbers"] = [x.model_dump() for x in view.numbers_to_know[:5] if _real(x.value) and _real(x.figure)]
+                result["expected"] = [{"who": e.who, "expects": e.expects, "by_when": e.by_when or None}
+                                      for e in view.what_is_expected[:3] if _real(e.who) and _real(e.expects)]
+                result["mistakes"] = [x[:360] for x in view.common_mistakes[:4] if _real(x)]
+                result["written_by"] = "model"
+            except Exception as exc:
+                obs.capture(exc)
+                result["notes"].append("The investing view could not be written just now, so the research notes are shown as they came back.")
+            try:
+                quiz = await gemini.guide_quiz(result)
+                result["quiz"] = [q.model_dump() for q in quiz.questions[:3]
+                                  if len(q.options) >= 2 and 0 <= q.answer < len(q.options)]
+            except Exception as exc:  # the guide stands without a quiz
+                obs.capture(exc)
+        result["seconds"] = round(time.time() - started)
+        if result["what_it_is"] and result["things_to_know"]:
+            cache_put("guide", key, result)
         return {**result, "home": home}

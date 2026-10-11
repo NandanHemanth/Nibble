@@ -58,7 +58,7 @@ a { color: inherit; }
 .say .go { padding: 10px 20px; background: var(--glow); border: 1px solid var(--glow); color: var(--ink); font-weight: 700; border-radius: 0 22px 22px 0; }
 .say .go:disabled { opacity: 0.6; cursor: progress; }
 .how {
-  margin-left: auto; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+  margin-left: 8px; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
   background: color-mix(in srgb, var(--sea) 90%, transparent); border: 1px solid var(--sea-line); color: var(--fog-soft);
   padding: 7px 14px; border-radius: 18px; font-size: 14px;
 }
@@ -229,6 +229,16 @@ textarea {
 .expect p { margin-top: 2px; }
 .expect .when { display: block; margin-top: 4px; font-family: var(--mono); font-size: 12px; color: var(--fog-soft); }
 .plain { list-style: disc; padding-left: 20px; display: grid; gap: 6px; }
+.timeline { display: grid; gap: 10px; border-left: 2px solid var(--sea-line); margin-left: 6px; padding-left: 16px; }
+.timeline li { position: relative; }
+.timeline li::before { content: ""; position: absolute; left: -22px; top: 8px; width: 10px; height: 10px; border-radius: 50%; background: var(--glow); }
+.timeline b { display: block; font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--glow); }
+.timeline a, .numbers a { font-size: 12.5px; color: var(--fog-soft); }
+.numbers { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; align-items: baseline; }
+.numbers dt { font-family: var(--mono); font-weight: 500; font-size: 17px; color: var(--glow); max-width: 190px; }
+.numbers dd { margin: 0; color: var(--fog); font-size: 14.5px; }
+.driver .who { color: var(--fog-soft); font-size: 14px; }
+.ask.first { margin-top: 8px; padding-top: 0; border-top: 0; }
 .terms dt { font-weight: 700; margin-top: 8px; }
 .terms dd { margin: 0; color: var(--fog-soft); }
 .choice {
@@ -327,7 +337,7 @@ textarea {
 
 /* ---- behind the scenes ---- */
 .activity {
-  position: fixed; right: 24px; top: 60px; z-index: 9; width: 440px; max-height: 70vh; overflow-y: auto;
+  position: fixed; left: 420px; top: 112px; z-index: 9; width: 440px; max-height: 70vh; overflow-y: auto;
   background: var(--sea); border: 1px solid var(--sea-line); padding: 16px 18px; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
 }
 .activity header { display: flex; justify-content: space-between; align-items: baseline; }
@@ -361,7 +371,7 @@ textarea {
   .receipt, .story { width: 100%; max-height: none; }
   .wire { position: static; padding: 10px 16px 16px; background: var(--night); }
   .legend { margin-left: 0; }
-  .activity { left: 16px; right: 16px; width: auto; }
+  .activity { left: 16px; right: 16px; width: auto; top: 150px; }
   .toasts { top: 8px; right: 8px; left: 8px; width: auto; }
 }
 @media (prefers-reduced-motion: reduce) {

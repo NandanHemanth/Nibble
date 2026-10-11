@@ -471,9 +471,16 @@ async def nearby_stores(zip_code: str, agent: str = "") -> list[dict]:
     return rows[:8]
 
 
-async def answer(question: str, agent: str = "") -> dict:
-    """Nimble Answer: one synthesized reply with numbered citations (a few seconds)."""
-    args = {"query": question, "include_answer": True, "max_results": 5}
+async def answer(question: str, agent: str = "", domains: list[str] | None = None, depth: str | None = None) -> dict:
+    """Nimble Answer: one synthesized reply with numbered citations (a few seconds).
+
+    `domains` limits the search to those sites (Nimble's include_domains), and depth="standard"
+    returns about 2,000 characters of page text per result instead of a short description."""
+    args: dict = {"query": question, "include_answer": True, "max_results": 4 if domains else 5}
+    if domains:
+        args["include_domains"] = domains
+    if depth:
+        args["search_depth"] = depth
     with tool_span("nimble.search.answer", args, agent, "Nimble Search with a synthesized answer") as span:
         res = _plain(await client().search(**args))
         results = res.get("results") or []
@@ -485,7 +492,9 @@ async def answer(question: str, agent: str = "") -> dict:
         if not cites:  # fall back to the results the answer was drawn from
             cites = [{"marker": i + 1, "title": r.get("title"), "url": r.get("url")} for i, r in enumerate(results) if r.get("url")]
         set_result(span, {"answered": bool(res.get("answer")), "citations": len(cites)})
-        return {"answer": res.get("answer") or "", "citations": cites[:6]}
+        size = 600 if depth == "standard" else 320
+        snippets = [f"{r.get('title') or ''}: {str(r.get('description') or r.get('content') or '')[:size]}" for r in results[:3]]
+        return {"answer": res.get("answer") or "", "citations": cites[:6], "snippets": [x for x in snippets if len(x) > 20]}
 
 
 def _largest_list(node: Any, depth: int = 0) -> list:
@@ -513,7 +522,7 @@ def _largest_list(node: Any, depth: int = 0) -> list:
 # Nimble agent name -> the name its spans carry in Sentry.
 _SPAN_AGENT = {"nibble-price-detective": "Price Detective", "nibble-signal-scout": "Signal Scout",
                "nibble-news-tracer": "News Tracer", "nibble-market-lens": "Market Lens",
-               "nibble-investing-coach": "Investing Coach"}
+               "nibble-investing-coach": "Investing Coach", "nibble-topic-basics": "Topic Guide"}
 
 
 async def agent_start(

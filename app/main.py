@@ -195,6 +195,17 @@ async def lesson(body: TraceIn) -> dict:
     return _start_job("Investing Coach", body.title[:60], lambda cb: pipelines.lesson(headline, body.zip, body.effort, cb))
 
 
+class GuideIn(BaseModel):
+    topic: str = Field(min_length=3, max_length=200)
+    zip: str = "10001"
+    effort: str | None = Field(default=None, pattern="^(low|medium|high)$")
+
+
+@app.post("/api/guide")
+async def guide(body: GuideIn) -> dict:
+    return _start_job("Topic Guide", body.topic[:60], lambda cb: pipelines.guide(body.topic, body.zip, body.effort, cb))
+
+
 @app.get("/api/atlas")
 async def get_atlas(items: str = "") -> dict:
     """Fixed globe layers. `items` is the current shopping list, comma separated, so its origins are marked."""

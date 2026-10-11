@@ -310,3 +310,38 @@ def lesson_for(headline: dict, home: dict) -> dict:
                  "answer": 1, "why": "Sample: coffee is bought ahead through contracts, so expectations move the price first."},
         "trust": None, "seconds": 0, "effort": "sample",
     }
+
+
+def guide_for(topic: str) -> dict:
+    """A sample deep-dive guide, so the screen can be shown without keys."""
+    return {
+        "sample": True, "topic": topic, "title": f"Sample guide: {topic[:60]}",
+        "in_one_line": "Sample: when many buyers want something that takes years to make more of, its price rises.",
+        "what_it_is": "Sample text. With a Nimble key, a research agent reads official reports, company filings and news, "
+                      "then writes this guide about the topic you typed, citing its sources.",
+        "background": [{"when": "Sample, year 1", "what": "Demand starts to grow faster than factories can be built."},
+                       {"when": "Sample, year 2", "what": "Buyers sign long contracts to secure supply."}],
+        "stages": [
+            {"stage": "Design", "who": "Sample design firms", "place": "Santa Clara, California", "lat": 37.35, "lng": -121.95,
+             "detail": "Sample: products are designed here, then made elsewhere."},
+            {"stage": "Manufacturing", "who": "Sample manufacturers", "place": "Hsinchu, Taiwan", "lat": 24.8, "lng": 120.97,
+             "detail": "Sample: a few factories make most of the supply, so a delay here moves prices everywhere."},
+            {"stage": "Assembly", "who": "Sample assemblers", "place": "Penang, Malaysia", "lat": 5.41, "lng": 100.33,
+             "detail": "Sample: parts are packaged and tested before shipping."}],
+        "happening_now": "Sample: this section describes what is happening this month, with numbers and dates.",
+        "price_drivers": [
+            {"driver": "Demand outrunning supply", "direction": "pushes prices up", "explanation": "Sample: new factories take years to build."},
+            {"driver": "New factories opening", "direction": "pushes prices down", "explanation": "Sample: more supply eases shortages."}],
+        "key_players": [{"name": "Sample company", "ticker": None, "exchange": None, "role": "Sample: what it does in this story."}],
+        "numbers": [{"figure": "Sample figure", "value": "a number with its unit", "as_of": "its date"}],
+        "things_to_know": ["Sample: industries like this move in cycles of shortage and glut.",
+                           "Sample: a company can sell more and still earn less if its costs rise faster."],
+        "expected": [{"who": "Sample forecaster", "expects": "What a named agency or analyst has published, with numbers and dates.", "by_when": None}],
+        "mistakes": ["Sample: treating one headline as a trend."],
+        "watch": ["Sample: the next industry sales report."],
+        "quiz": [{"question": "Sample question: why can prices stay high for a long time?",
+                  "options": ["Factories take years to build", "Prices never fall", "Shops choose prices at random"],
+                  "answer": 0, "why": "Sample: supply cannot respond quickly."}],
+        "research": [], "written_by": None, "notes": [],
+        "sources": [], "trust": None, "seconds": 0, "effort": "sample",
+    }

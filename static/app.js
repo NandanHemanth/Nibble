@@ -882,20 +882,29 @@ const NOT_ADVICE = "Nibble teaches how to read the news. It does not tell you wh
 /* The "Learn investing" start page: pick a story, type a topic, or practise with cards. */
 function showLearn() {
   state.story = null; state.trace = null;
-  const panel = openPanel("learn-hub", "Learn investing", "Learn from what is happening today");
-  panel.append(el("p", "summary", "Pick a story. Nibble walks you through it in six short steps: what happened, why it matters, how it spreads, who feels it, what experts expect, and what could prove them wrong."));
+  const panel = openPanel("learn-hub", "Learn investing", "Learn from what is happening in the world");
+  panel.append(el("h3", null, "Deep dive into any topic"));
+  panel.append(el("p", "hint", "Type what you want to understand. Nibble researches it and writes you a guide from zero: what it is, how we got here, how it works, what moves the price, who the players are and what to know before investing."));
+  const form = el("form", "ask first");
+  const input = el("input");
+  input.type = "text"; input.maxLength = 160; input.placeholder = "Teach me: why semiconductor prices are rising";
+  input.setAttribute("aria-label", "A topic to learn about");
+  const go = el("button", "mini strong", "Teach me");
+  form.append(input, go);
+  form.addEventListener("submit", (e) => { e.preventDefault(); const q = input.value.trim(); if (q.length > 2) showGuide(q); });
+  panel.append(form);
+  const ideas = el("div", "story-actions");
+  for (const t of ["Why semiconductor prices are rising", "How interest rates move stocks", "What moves the price of oil"]) {
+    const b = el("button", "mini", t); b.type = "button";
+    b.addEventListener("click", () => showGuide(t));
+    ideas.append(b);
+  }
+  panel.append(ideas);
+  panel.append(el("h3", null, "Or learn from a story in today's news"));
   for (const h of state.news.slice(0, 6)) {
     panel.append(choice(h.title, [h.source, (h.in_your_basket || []).length ? `on your list: ${h.in_your_basket.join(", ")}` : ""].filter(Boolean).join(", "), () => showLesson(h)));
   }
-  if (!state.news.length) panel.append(el("p", "change", "No headlines have loaded yet. Type a topic below instead."));
-  const form = el("form", "ask");
-  const input = el("input");
-  input.type = "text"; input.maxLength = 160; input.placeholder = "Or type a topic: interest rates, oil, tariffs";
-  input.setAttribute("aria-label", "A topic to learn about");
-  const go = el("button", "mini", "Teach me");
-  form.append(input, go);
-  form.addEventListener("submit", (e) => { e.preventDefault(); const q = input.value.trim(); if (q.length > 2) showLesson({ title: q }); });
-  panel.append(form);
+  if (!state.news.length) panel.append(el("p", "change", "No headlines have loaded yet."));
   actionRow(panel, [["Practise with flashcards", () => showCards("")]]);
   panel.append(el("p", "prov", NOT_ADVICE));
   drawGlobe();
@@ -1046,9 +1055,211 @@ function drawLesson(l, h) {
   const pairs = [];
   if (h.url) pairs.push(["Check if this story is true", () => traceHeadline(h)]);
   if (!l.sample && l.effort === "low") pairs.push(["Go deeper (1 to 3 minutes)", () => showLesson(h, "medium")]);
-  pairs.push(["Pick another story", showLearn]);
+  pairs.push(["Deep dive on this topic", () => showGuide(l.original.title)], ["Pick another story", showLearn]);
   actionRow(panel, pairs);
   panel.append(askBox(l.original.title));
+}
+
+/* ------------------------------------------------------- deep-dive guides */
+const DIRECTION = { "pushes prices up": ["Pushes prices up", "low"], "pushes prices down": ["Pushes prices down", "high"], "either way": ["Can go either way", ""] };
+const cleanTopic = (t) => t.replace(/^(please\s+)?(can you\s+)?(teach me( about)?|explain( to me)?|help me understand|i want to (learn|understand)( about)?|deep.?dive( on| into)?)\s+/i, "").replace(/[?.\s]+$/, "").trim();
+
+/* "Teach me X": a full guide to one topic, written by a Nimble research agent. */
+async function showGuide(topic, effort) {
+  topic = cleanTopic(topic) || topic;
+  const key = `guide:${topic}`;
+  state.story = null; state.trace = null;
+  const panel = openPanel(key, "Deep dive", topic);
+  const wait = el("p", "wait");
+  const label = el("span", null, "Starting the deep dive");
+  wait.append(el("i"), label);
+  panel.append(wait, el("p", "change", "A Nimble research agent reads reports, filings and news about this topic while three live web lookups gather the investing side. Nibble then puts it together as a guide from zero. This takes about a minute."));
+  $("#pulse").classList.add("busy");
+  try {
+    const g = await runJob(post("/api/guide", { topic, zip: $("#zip").value, effort }), (j) => {
+      label.textContent = state.status.nimble === "live" ? `Reading the sources (${Math.round(j.elapsed)} seconds)` : "Loading a sample guide";
+    });
+    if (state.activeItem !== key) return;
+    state.trace = { chain: (g.stages || []).map((s) => ({ ...s, place: s.stage })) };
+    state.home = g.home || state.home;
+    drawGuide(g);
+    drawGlobe();
+    const first = (g.stages || []).find((s) => s.lat != null);
+    if (first) flyTo(first.lat, first.lng, 2.2);
+  } catch (err) {
+    wait.remove();
+    panel.append(el("p", "error", `The deep dive could not be built: ${err.message}`));
+    actionRow(panel, [["Try again", () => showGuide(topic, effort)], ["Get a quick answer instead", () => showAnswer(topic)]]);
+  } finally { $("#pulse").classList.remove("busy"); }
+}
+
+function drawGuide(g) {
+  const panel = $("#story");
+  panel.replaceChildren();
+  panel.scrollTop = 0;
+  panel.append(el("p", "item", `Deep dive${g.sample ? " (sample)" : ""}`), el("h2", null, g.title));
+  if (g.in_one_line) panel.append(el("p", "tip", g.in_one_line));
+  for (const note of g.notes || []) panel.append(el("p", "error", note));
+
+  let n = 0;
+  const step = (title) => {
+    n += 1;
+    const head = el("h3", "step");
+    head.append(el("b", null, String(n)), document.createTextNode(title));
+    panel.append(head);
+  };
+  const bullets = (items) => { const ul = el("ul", "plain"); for (const x of items) ul.append(el("li", null, x)); panel.append(ul); };
+
+  if (g.what_it_is) { step("What is it?"); panel.append(el("p", "summary", g.what_it_is)); }
+
+  if ((g.background || []).length) {
+    step("How did we get here?");
+    const list = el("ol", "timeline");
+    for (const b of g.background) {
+      const li = el("li");
+      li.append(el("b", null, b.when), el("span", null, b.what));
+      if (b.citations?.[0]) { li.append(document.createTextNode(" ")); li.append(link(b.citations[0].url, "source")); }
+      list.append(li);
+    }
+    panel.append(list);
+  }
+
+  if ((g.stages || []).length) {
+    step("How does it work?");
+    panel.append(el("p", "hint", "Follow the numbers on the globe. Click a place to fly there."));
+    g.stages.forEach((st, i) => {
+      const box = el("div", "driver");
+      const top = el("div", "driver-top");
+      top.append(el("span", "driver-title", `${i + 1}. ${st.stage}`));
+      if (st.confidence) top.append(el("span", `conf ${st.confidence}`, confWord(st.confidence)));
+      const place = el("button", "place-btn", st.place || "");
+      place.type = "button";
+      place.disabled = st.lat == null;
+      place.addEventListener("click", () => flyTo(st.lat, st.lng, 1.1));
+      box.append(top, place);
+      if (st.who) box.append(el("p", "who", st.who));
+      box.append(el("p", null, st.detail));
+      if (st.citations?.length) box.append(citesOf(st.citations.slice(0, 1)));
+      panel.append(box);
+    });
+  }
+
+  if (g.happening_now) { step("What is happening now?"); panel.append(el("p", "summary", g.happening_now)); }
+
+  if ((g.price_drivers || []).length) {
+    step("What moves the price?");
+    for (const d of g.price_drivers) {
+      const box = el("div", "tied");
+      const top = el("div", "tied-top");
+      const [word, cls] = DIRECTION[d.direction] || [d.direction, ""];
+      top.append(el("span", "tied-name", d.driver), el("span", `conf ${cls}`, word));
+      box.append(top, el("p", null, d.explanation));
+      panel.append(box);
+    }
+  }
+
+  if ((g.key_players || []).length) {
+    step("Who are the main players?");
+    for (const x of g.key_players) {
+      const box = el("div", "tied");
+      const top = el("div", "tied-top");
+      top.append(el("span", "tied-name", x.name));
+      if (x.ticker) top.append(el("span", "ticker", x.ticker));
+      box.append(top, el("p", null, x.role));
+      if (x.ticker) {
+        const actions = el("div", "story-actions");
+        const q = el("button", "mini", "See today's share price");
+        q.type = "button";
+        q.addEventListener("click", () => getQuote(x, q, box));
+        actions.append(q);
+        box.append(actions);
+      }
+      panel.append(box);
+    }
+  }
+
+  if ((g.numbers || []).length) {
+    step("Numbers to know");
+    const dl = el("dl", "numbers");
+    for (const x of g.numbers) {
+      const dd = el("dd", null, x.figure + (x.as_of ? ` (${x.as_of})` : ""));
+      if (x.citations?.[0]) { dd.append(document.createTextNode(" ")); dd.append(link(x.citations[0].url, "source")); }
+      dl.append(el("dt", null, x.value), dd);
+    }
+    panel.append(dl);
+  }
+
+  if ((g.things_to_know || []).length) { step("What to understand before investing"); bullets(g.things_to_know); }
+
+  if ((g.research || []).length) {
+    step("What the web says right now");
+    panel.append(el("p", "hint", "Live answers from Nimble, with the pages they came from. Open a source to check it."));
+    for (const r of g.research) {
+      const box = el("div", "expect");
+      box.append(el("b", null, r.question), el("p", null, r.answer));
+      if (r.trusted_only) box.append(el("span", "when", "Searched only wire services, business press, regulators and statistics agencies"));
+      const cites = el("div", "cites");
+      for (const c of (r.citations || []).slice(0, 4)) { const cite = el("div", "cite"); cite.append(link(c.url, c.title || c.url)); cites.append(cite); }
+      box.append(cites);
+      panel.append(box);
+    }
+  }
+
+  if ((g.expected || []).length) {
+    step("What do experts expect?");
+    panel.append(el("p", "hint", "These are forecasts published by the people named. They are not Nibble's predictions, and forecasts are often wrong."));
+    for (const e of g.expected) {
+      const box = el("div", "expect");
+      box.append(el("b", null, e.who), el("p", null, e.expects));
+      if (e.by_when) box.append(el("span", "when", `By: ${e.by_when}`));
+      if (e.citations?.length) box.append(citesOf(e.citations.slice(0, 1)));
+      panel.append(box);
+    }
+  }
+
+  if ((g.mistakes || []).length) { step("Common beginner mistakes"); bullets(g.mistakes); }
+  if ((g.watch || []).length) { step("What to watch next"); bullets(g.watch); }
+
+  if ((g.quiz || []).length) {
+    step("Check yourself");
+    for (const q of g.quiz) {
+      const quiz = el("div", "quiz");
+      quiz.append(el("p", null, q.question));
+      const why = el("p", "hint");
+      q.options.forEach((opt, i) => {
+        const b = el("button", null, opt); b.type = "button";
+        b.addEventListener("click", () => {
+          if (quiz.dataset.done) return;
+          quiz.dataset.done = "1";
+          quiz.querySelectorAll("button").forEach((x, k) => x.classList.add(k === q.answer ? "right" : k === i ? "wrong" : "none"));
+          why.textContent = `${i === q.answer ? "Right." : "Not quite."} ${q.why || ""}`;
+        });
+        quiz.append(b);
+      });
+      quiz.append(why);
+      panel.append(quiz);
+    }
+  }
+
+  if ((g.sources || []).length) {
+    panel.append(el("h3", null, "Sources the agent read"));
+    const cites = el("div", "cites");
+    for (const c of g.sources) { const cite = el("div", "cite"); cite.append(link(c.url, c.title || c.url)); cites.append(cite); }
+    panel.append(cites);
+  }
+
+  const prov = el("p", "prov");
+  prov.textContent = g.sample
+    ? `Sample guide with no sources. With a Nimble key, a research agent reads the web and writes the guide for the topic you typed. ${NOT_ADVICE}`
+    : `Steps 1 to 4 were researched by a Nimble Web Search Agent, which cites its sources. ` +
+      (g.written_by ? "The investing sections were written by the language model from the live Nimble answers shown above, so check a number against its source before relying on it. " : "") +
+      `${g.cached ? "Saved from earlier" : `Built in ${g.seconds} seconds`}, ${g.trust?.sources ?? 0} pages read. ${NOT_ADVICE}`;
+  panel.append(prov);
+  const pairs = [];
+  if (!g.sample && g.effort === "low") pairs.push(["Go deeper (several minutes)", () => showGuide(g.topic, "medium")]);
+  pairs.push(["Practise with flashcards", () => showCards(g.topic.slice(0, 80))], ["Pick another topic", showLearn]);
+  actionRow(panel, pairs);
+  panel.append(askBox(g.topic));
 }
 
 /* ------------------------------------------------------------ start page */
@@ -1098,9 +1309,9 @@ async function say(text) {
     } else if (r.intent === "why" && r.topic) {
       await askWhy(r.topic);
     } else if (r.intent === "invest") {
-      await showLesson({ title: r.topic || text });
+      await showGuide(text);
     } else if (r.intent === "learn") {
-      await showCards(r.topic);
+      if (/flash ?cards?/i.test(text)) await showCards(r.topic); else await showGuide(text);
     } else {
       await showAnswer(text);
     }

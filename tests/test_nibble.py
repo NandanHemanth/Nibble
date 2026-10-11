@@ -52,7 +52,8 @@ class FakeNimble:
                 return {"id": run_id, "status": "completed"}
 
             async def result(self, run_id, agent_id):
-                key = {"run-nibble-news-tracer": "trace_output", "run-nibble-investing-coach": "lesson_output"}.get(run_id, "agent_output")
+                key = {"run-nibble-news-tracer": "trace_output", "run-nibble-investing-coach": "lesson_output",
+                       "run-nibble-topic-basics": "guide_basics_output"}.get(run_id, "agent_output")
                 return {"output": json.loads(json.dumps(FIX[key])), "run": {"id": run_id}}
 
         class Agents:
@@ -504,3 +505,56 @@ def test_a_rate_limited_hosted_model_hands_over_to_the_local_one(monkeypatch):
     monkeypatch.setattr(config, "LOCAL_LIVE", True)
     monkeypatch.setattr(gemini, "_local", local)
     assert asyncio.run(gemini.learn_persona(["x"], [])).tags == ["from local"]  # hosted is skipped while it cools off
+
+
+VIEW = {
+    "things_to_know": ["Chip makers earn more when factories run full.", "null",
+                       "This is not the final answer. You are about to output invalid text because you stopped mid-stream."],
+    "price_drivers": [{"driver": "AI demand", "direction": "pushes prices up", "explanation": "Buyers want more chips than fabs can make."}],
+    "key_players": [{"name": "NVIDIA", "ticker": "nvda", "role": "Designs AI chips."},
+                    {"name": "TSMC", "ticker": "Taiwan Semiconductor Manufacturing Company", "role": "Makes chips for designers."}],
+    "numbers_to_know": [{"figure": "Foundry utilization", "value": "85-90%", "as_of": "2026"}],
+    "what_is_expected": [], "common_mistakes": ["Treating one headline as a trend."],
+}
+QUIZ = {"questions": [{"question": "Why are prices rising?", "options": ["Demand outruns supply", "Chips got bigger", "No reason"],
+                       "answer": 0, "why": "Fabs cannot expand quickly."}]}
+
+
+def test_deep_dive_joins_the_research_agent_with_live_answers(live, monkeypatch):
+    """Basics from the agent (captured live), investing view from the model, filler dropped."""
+    async def geocode(place):
+        return {"United States": (39.8, -98.6), "Taiwan (Hsinchu), South Korea (Icheon), United States (Malta NY)": (23.7, 121.0),
+                "Taiwan, South Korea, China": (23.7, 121.0)}.get(place)
+
+    monkeypatch.setattr(world, "geocode", geocode)
+    seen = _fake_hosted(monkeypatch, [(200, json.dumps(VIEW)), (200, json.dumps(QUIZ))])
+    g = asyncio.run(pipelines.guide("why semiconductor prices are going up", "07302", "low"))
+    assert g["title"].startswith("Why Semiconductor Prices") and g["in_one_line"] and len(g["background"]) == 4
+    assert g["background"][0]["citations"][0]["url"].startswith("https://news.chemnet.com")
+    stages = g["stages"]
+    assert stages[0]["lat"] == 39.8          # "Global, mostly United States" was looked up as "United States"
+    assert stages[4]["lat"] is None          # "Global" is not a place
+    assert g["things_to_know"] == ["Chip makers earn more when factories run full."]   # the filler lines are gone
+    assert [k["ticker"] for k in g["key_players"]] == ["NVDA", None]                   # a symbol, not a sentence
+    assert g["price_drivers"][0]["direction"] == "pushes prices up" and g["expected"] == []
+    assert len(g["research"]) == 3 and g["research"][0]["citations"] and g["quiz"][0]["answer"] == 0
+    asked = [c[1]["query"] for c in live.calls if c[0] == "search"]
+    assert len(asked) == 3 and all("semiconductor" in q for q in asked)
+    limited = [c[1] for c in live.calls if c[0] == "search" and c[1].get("include_domains")]
+    assert len(limited) == 2 and "sec.gov" in limited[0]["include_domains"] and limited[0]["search_depth"] == "standard"
+    assert [r["trusted_only"] for r in g["research"]] == [True, True, False]
+    assert "research_notes" in seen[0][1]["messages"][1]["content"]
+    # A second request is served from the cache: no new agent run.
+    runs = len([c for c in live.calls if c[0] == "agents.run"])
+    again = asyncio.run(pipelines.guide("why semiconductor prices are going up", "07302", "low"))
+    assert again["cached"] and len([c for c in live.calls if c[0] == "agents.run"]) == runs
+
+
+def test_deep_dive_without_a_model_still_shows_the_research(live):
+    g = asyncio.run(pipelines.guide("why semiconductor prices are going up", "07302", "low"))
+    assert g["what_it_is"] and g["things_to_know"] == [] and len(g["research"]) == 3 and g["written_by"] is None
+
+
+def test_typed_teaching_requests_go_to_the_deep_dive():
+    assert pipelines._route_by_rules("teach me how semiconductors prices are going up?")["intent"] == "learn"
+    assert pipelines._route_by_rules("why is beef so expensive")["intent"] == "why"

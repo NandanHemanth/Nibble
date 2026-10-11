@@ -390,8 +390,9 @@ async def route(text: str) -> Route:
     system = (
         "You route one sentence typed into a household-finance app. basket = they list groceries to price. "
         "season = they ask what is in season or what to buy now. why = they ask why a grocery item costs what "
-        "it costs. invest = they ask about markets, stocks, sectors, or what an event means for investors. "
-        "learn = they want a finance concept explained or want flashcards. ask = any other question."
+        "it costs (food and household items only). invest = they ask what an event means for investors. "
+        "learn = they want to be taught or to understand a topic, industry, market, finance concept or a price "
+        "trend that is not a grocery item (semiconductors, oil, interest rates, housing...). ask = any other question."
     )
     return await _generate(text[:400], Route, system, "route", 0.0)
 
@@ -485,3 +486,79 @@ async def lesson_extras(lesson: dict) -> LessonExtras:
         "affected": [{"name": a.get("name"), "effect": a.get("effect"), "because": a.get("because")} for a in lesson.get("affected") or []],
     }
     return await _generate(json.dumps(compact), LessonExtras, system, "lesson_extras", 0.2)
+
+
+class Question(BaseModel):
+    question: str = Field(description="A multiple-choice question that tests understanding of the guide, not recall of a number")
+    options: list[str] = Field(description="Exactly 3 short options")
+    answer: int = Field(description="Index 0 to 2 of the correct option")
+    why: str = Field(description="One sentence on why that option is right, using only the guide")
+
+
+class Quiz(BaseModel):
+    questions: list[Question] = Field(description="Exactly 3 questions")
+
+
+async def guide_quiz(guide: dict) -> Quiz:
+    """Three check questions for a deep-dive guide the research agent wrote."""
+    system = ("You write three check questions for a beginner who just read a short guide to a money topic. "
+              "Use only what the guide says. Test the reasoning: what causes what, and why. "
+              "Never recommend buying or selling anything.")
+    compact = {k: guide.get(k) for k in ("title", "what_it_is", "happening_now", "price_drivers", "things_to_know")}
+    compact["how_it_works"] = [{"stage": s.get("stage"), "detail": s.get("detail")} for s in guide.get("stages") or []]
+    return await _generate(json.dumps(compact)[:6000], Quiz, system, "guide_quiz", 0.3)
+
+
+class Driver(BaseModel):
+    driver: str = Field(description="The driver in 2 to 6 words")
+    direction: str = Field(description="Exactly one of: pushes prices up, pushes prices down, either way")
+    explanation: str = Field(description="One plain sentence")
+
+
+class Player(BaseModel):
+    name: str = Field(description="One company name only")
+    ticker: str = Field(description="Its US stock symbol such as NVDA if it trades on NYSE or Nasdaq, otherwise an empty string")
+    role: str = Field(description="One sentence on what it does in this story")
+
+
+class Figure(BaseModel):
+    figure: str = Field(description="What is measured, in a few words")
+    value: str = Field(description="The number with its unit, copied from the research text")
+    as_of: str = Field(description="The date or period it refers to, from the research text")
+
+
+class Forecast(BaseModel):
+    who: str = Field(description="The named forecaster, as written in the research text")
+    expects: str = Field(description="What they forecast, with their numbers and dates")
+    by_when: str = Field(description="The period the forecast covers, or an empty string")
+
+
+class InvestingView(BaseModel):
+    things_to_know: list[str] = Field(description="5 things a beginner should understand before investing in this area: how companies "
+                                                  "here make money, how the cycle works, the main risks. One or two plain sentences each")
+    price_drivers: list[Driver] = Field(description="3 to 5 things that move prices")
+    key_players: list[Player] = Field(description="4 to 6 companies central to the topic, one per entry")
+    numbers_to_know: list[Figure] = Field(description="Up to 5 figures that appear in the research text. Empty if it has none")
+    what_is_expected: list[Forecast] = Field(description="Up to 3 forecasts that appear in the research text with a named source. Empty if it has none")
+    common_mistakes: list[str] = Field(description="3 mistakes beginners make when reading news on this topic, one sentence each")
+
+
+async def guide_investing(topic: str, basics: dict, research: list[dict]) -> InvestingView:
+    """The investing half of a deep-dive guide, written from what Nimble found."""
+    system = (
+        "You are a patient teacher explaining the investing side of one money topic to a complete beginner. "
+        "You are given a researched guide to the basics and research notes from live web searches. "
+        "Anything about the present (numbers, dates, who is doing what, forecasts) must come from that material; "
+        "never invent a number, a date or a forecast, and leave a list empty rather than guess. "
+        "You may use general knowledge to explain how things work. Use plain words and explain every finance term. "
+        "You teach how to understand a topic. Never say what to buy, sell or hold, and never predict prices yourself. "
+        "Do not repeat analyst stock ratings or share-price targets."
+    )
+    material = {
+        "topic": topic,
+        "basics": {k: basics.get(k) for k in ("what_it_is", "happening_now")},
+        "background": [f"{b.get('when')}: {b.get('what')}" for b in basics.get("background") or []],
+        "how_it_works": [f"{st.get('stage')} ({st.get('who')}): {st.get('detail')}" for st in basics.get("stages") or []],
+        "research_notes": [{"question": r.get("question"), "answer": r.get("answer"), "snippets": r.get("snippets")} for r in research],
+    }
+    return await _generate(json.dumps(material)[:12000], InvestingView, system, "guide_investing", 0.3)

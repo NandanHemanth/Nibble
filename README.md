@@ -72,6 +72,17 @@ Before a demo:
   forecasters expect, what could prove them wrong, words to know, and one
   check question. Forecasts are always attributed; Nibble makes none itself
   and never says what to buy or sell.
+- **Deep dive** ("teach me why semiconductor prices are rising", or the box at
+  the top of Learn investing) builds a guide from zero: what it is, how we got
+  here, how it works (stages numbered on the globe), what is happening now,
+  what moves the price, the main companies, numbers to know, what to
+  understand before investing, what named sources expect, common mistakes and
+  three check questions. Steps 1 to 4 come from a Nimble Web Search Agent with
+  citations. The investing sections are written by the model from three live
+  Nimble Answer lookups, which are shown with their sources. Two of those
+  lookups use `include_domains` and `search_depth="standard"` to read only
+  wire services, business press, regulators and statistics agencies, the
+  pattern from Nimble's financial research cookbook.
 - **How it works** holds the service status and every agent step.
 
 ## The agents
@@ -193,6 +204,18 @@ Checked against the live Nimble API on 2026-10-11:
   with the lesson schema accepted. It wrote its places as sentences and left
   out the finance terms, so a model call now adds map places, three terms and
   a check question.
+
+- Deep dive, 2026-10-11, topic "why semiconductor prices are going up", low
+  effort. One agent run with the whole guide schema failed once, then finished
+  in 90 s with required fields missing or empty. A run with only the basics
+  half finished in 57 s with every field filled. A run with only the investing
+  half finished in 27 s with filler text in two fields. So the agent is asked
+  for the basics only, a failed run is retried once, filler strings are
+  dropped, and the investing half is built from Nimble Answer lookups. A
+  domain-limited, standard-depth Answer for the forecast question returned
+  named forecasts (Counterpoint, TrendForce) with Reuters and CNBC sources. That
+  combined path has been tested against the captured basics run and a
+  stand-in model, not yet end to end with live keys.
 
 The local-model path was tested against a stand-in for Ollama, not a real
 Ollama server. The lesson screen and the new globe layers were checked in a

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nibble</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="globe" aria-hidden="true"></div>
+
+  <header class="bar">
+    <div class="bar-row">
+      <h1><button class="mark" id="home-btn" type="button" title="Back to the start">nibble</button></h1>
+      <form class="say" id="say">
+        <label class="sr" for="say-text">Ask Nibble anything about prices, news or money</label>
+        <input id="say-text" type="text" maxlength="300" autocomplete="off"
+               placeholder="Ask anything. Try: eggs, milk and coffee. Or: why is beef so expensive?">
+        <button class="go" type="submit">Ask</button>
+      </form>
+      <button class="how" id="pulse" type="button" aria-expanded="false" aria-controls="activity"><i></i><span>How it works</span></button>
+    </div>
+    <nav class="quick" aria-label="What would you like to do?">
+      <button class="chip" id="q-shop" type="button">Price my groceries</button>
+      <button class="chip" id="q-news" type="button">Today's news</button>
+      <button class="chip" id="q-learn" type="button">Learn investing</button>
+      <button class="chip" id="q-season" type="button">In season now</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="receipt" aria-label="Your basket">
+      <div class="paper">
+        <div class="paper-head">
+          <p class="shop">NIBBLE</p>
+          <label class="zip">
+            <span>Prices near ZIP</span>
+            <input id="zip" inputmode="numeric" maxlength="5" value="07302" aria-label="ZIP code">
+          </label>
+          <p class="place" id="place"></p>
+        </div>
+
+        <div id="compose">
+          <label for="list" class="field-label">Shopping list, one item per line</label>
+          <textarea id="list" rows="8" spellcheck="false"></textarea>
+          <fieldset class="prefs">
+            <legend>Only match products I would buy</legend>
+            <label><input type="checkbox" id="pref-organic"> Organic only</label>
+            <label><input type="checkbox" id="pref-brands" checked> Store brands are fine</label>
+          </fieldset>
+          <button class="act" id="go">Find the cheapest basket</button>
+          <button class="act quiet" id="scan">Scan a receipt photo</button>
+          <input type="file" id="photo" accept="image/*,application/pdf" hidden>
+        </div>
+
+        <div id="result" hidden></div>
+        <div class="habits" id="habits" hidden></div>
+        <p class="fineprint" id="fineprint"></p>
+      </div>
+    </section>
+
+    <aside class="story" id="story" aria-live="polite"></aside>
+  </main>
+
+  <footer class="wire">
+    <div class="wire-head">
+      <h2>Today's news. Check a story, or learn from it.</h2>
+      <div class="legend" id="legend" role="group" aria-label="Show or hide dots on the globe"></div>
+    </div>
+    <ol class="headlines" id="headlines"></ol>
+  </footer>
+
+  <section class="activity" id="activity" hidden aria-label="How Nibble works">
+    <header>
+      <h2>Behind the scenes</h2>
+      <button class="link" id="close-activity" type="button">Close</button>
+    </header>
+    <ul class="services" id="services"></ul>
+    <p class="activity-note" id="activity-note"></p>
+    <ol id="activity-list"></ol>
+    <button class="link" id="chaos" type="button">Test the error alarm</button>
+  </section>
+
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+  <script src="/vendor/globe.gl.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

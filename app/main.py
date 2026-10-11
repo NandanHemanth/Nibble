@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from typing import Awaitable, Callable
@@ -125,6 +126,9 @@ async def status() -> dict:
     info = {**config.status(), "local": local, "local_model": config.LOCAL_MODEL or None,
             "sample_list": demo.SAMPLE_LIST}
     info["ai"] = "hosted" if config.HOSTED_LIVE else "local" if local == "live" else ("gemini" if config.GEMINI_LIVE else "off")
+    from . import market
+
+    info["market_data"] = market.library()
     info["hosted_by"] = config.LLM_BASE_URL.split("//")[-1].split("/")[0] if config.HOSTED_LIVE else None
     return info
 
@@ -161,6 +165,13 @@ async def signals(body: SignalsIn) -> dict:
 @app.post("/api/quote")
 async def quote(body: QuoteIn) -> dict:
     return _start_job("Signal Scout", f"quote {body.ticker.upper()}", lambda cb: pipelines.quote(body.ticker, body.exchange, cb))
+
+
+@app.get("/api/history")
+async def history(ticker: str) -> dict:
+    if not re.fullmatch(r"[A-Za-z.\-]{1,8}", ticker or ""):
+        raise HTTPException(422, "Not a ticker symbol")
+    return await pipelines.history(ticker)
 
 
 @app.post("/api/trace")

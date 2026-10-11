@@ -92,6 +92,7 @@ def live(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "STORE_TEMPLATES", ["walmart_serp", "kroger_serp", "amazon_serp"])
     monkeypatch.setattr(pipelines, "CACHE_DIR", tmp_path)
     monkeypatch.setattr(pipelines.persona, "PATH", tmp_path / "persona.json")
+    monkeypatch.setattr(pipelines, "_LIVE", {"pool": [], "at": 0.0, "turn": 0, "busy": False})
 
     async def fake_zip(z):
         return {"zip": z, "lat": 40.72, "lng": -74.05, "label": "Jersey City, NJ", "approximate": False}
@@ -558,3 +559,50 @@ def test_deep_dive_without_a_model_still_shows_the_research(live):
 def test_typed_teaching_requests_go_to_the_deep_dive():
     assert pipelines._route_by_rules("teach me how semiconductors prices are going up?")["intent"] == "learn"
     assert pipelines._route_by_rules("why is beef so expensive")["intent"] == "why"
+
+
+def test_news_strip_adds_one_beat_per_refresh(live):
+    first = asyncio.run(pipelines.news())
+    opening = len([c for c in live.calls if c[0] == "search"])
+    assert opening == 3 and first["headlines"]
+    asyncio.run(pipelines.news())                       # asked again straight away: no new search
+    assert len([c for c in live.calls if c[0] == "search"]) == opening
+
+    async def one_new(**kw):
+        live.calls.append(("search", kw))
+        return {"results": [{"title": "Chip prices jump again", "url": "https://example.org/chips",
+                             "additional_data": {"source": "Example Wire"}}, *FIX["news"]["results"][:1]]}
+
+    live.search = one_new
+    pipelines._LIVE["at"] -= 60                         # half a minute later
+    second = asyncio.run(pipelines.news())
+    searches = [c[1] for c in live.calls if c[0] == "search"]
+    assert len(searches) == opening + 1 and searches[-1]["query"] == pipelines.LIVE_BEATS[3]
+    assert len(second["headlines"]) == len(first["headlines"]) + 1          # only the unseen one is added
+    assert any(h["title"] == "Chip prices jump again" and h.get("fresh_at") for h in second["headlines"])
+
+
+def test_price_history_is_summarised_and_optional(monkeypatch):
+    from app import market
+
+    rows = [(f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}", 100 + i) for i in range(250)]
+    s = market.summarize("NVDA", rows, "OpenBB (Yahoo Finance data)")
+    assert s["first"] == 100 and s["last"] == 349 and s["change_pct"] == 249.0 and s["high"] == 349 and s["low"] == 100
+    assert len(s["points"]) <= 64 and s["points"][-1]["c"] == 349 and s["source"].startswith("OpenBB")
+    assert market.summarize("X", rows[:3], "x")["points"] == []
+
+    monkeypatch.setattr(market, "library", lambda: None)
+    missing = asyncio.run(market.history("NVDA"))
+    assert missing["available"] is False and "pip install openbb" in missing["note"]
+
+    monkeypatch.setattr(market, "library", lambda: "openbb")
+    monkeypatch.setattr(market, "_has", lambda name: True)
+    monkeypatch.setattr(market, "_from_openbb", lambda ticker, start: rows)
+    assert asyncio.run(market.history("nvda"))["source"].startswith("OpenBB")
+
+    def broken(ticker, start):
+        raise RuntimeError("provider changed")
+
+    monkeypatch.setattr(market, "_from_openbb", broken)        # OpenBB fails: yfinance takes over
+    monkeypatch.setattr(market, "_from_yfinance", lambda ticker, start: rows)
+    assert asyncio.run(market.history("nvda"))["source"].startswith("yfinance")

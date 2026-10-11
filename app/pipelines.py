@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import re
 import time
 
@@ -525,43 +526,126 @@ def _personalize(result: dict) -> dict:
     return {**result, "headlines": out, "watching": persona.watchwords(p)}
 
 
+# Beats the live strip cycles through, one per refresh, after the opening three.
+LIVE_BEATS = NEWS_QUERIES + [
+    "semiconductor chip prices",
+    "oil prices OPEC energy",
+    "Federal Reserve inflation interest rates",
+    "shipping ports container freight rates",
+    "housing market mortgage rates",
+    "company earnings results",
+    "crop harvest weather drought",
+]
+NEWS_EVERY_S = 25  # the page asks every 30 s; one Nimble news search per refresh
+NEWS_POOL = 24
+_LIVE = {"pool": [], "at": 0.0, "turn": 0, "busy": False}
+
+
+def _news_key(h: dict) -> str:
+    return re.sub(r"\W+", "", (h.get("title") or "").lower())[:60]
+
+
+async def _tag_headlines(headlines: list[dict]) -> list[str]:
+    """Place each headline on the map and say in one line what it means for a household."""
+    if not (config.llm_live() and headlines):
+        return []
+    try:
+        tags = await gemini.tag_news(headlines)
+        for t in tags.tags:
+            if 0 <= t.index < len(headlines):
+                headlines[t.index].update({
+                    "place": t.place, "lat": t.lat if _on_earth(t.lat, t.lng) else None,
+                    "lng": t.lng if _on_earth(t.lat, t.lng) else None,
+                    "category": t.category, "wallet_impact": t.wallet_impact, "groceries": t.groceries[:3]})
+        return []
+    except Exception as exc:
+        obs.capture(exc)
+        return ["Headline tagging failed"]
+
+
 async def news() -> dict:
+    """The live news strip. The first call runs three searches at once. After that, each call that
+    comes at least NEWS_EVERY_S later runs one more search on the next beat and puts anything new
+    at the front, so the strip keeps moving without a burst of calls."""
     with obs.agent_span("News Desk", "Today's finance and supply headlines, placed on the map"):
         if not config.NIMBLE_LIVE:
             return _personalize({"sample": True, "headlines": demo.SAMPLE_NEWS})
-        cached = cache_get("news", "today", 180)  # refreshed often enough for pop-ups
-        if cached:
-            return _personalize(cached)
-        batches = await asyncio.gather(*(nimble.news_search(q, "day", 7, "News Desk") for q in NEWS_QUERIES),
-                                       return_exceptions=True)
-        seen, headlines, notes = set(), [], []
-        for b in batches:
-            if isinstance(b, Exception):
-                notes.append(type(b).__name__)
-                obs.capture(b)
-                continue
-            for h in b:
-                k = re.sub(r"\W+", "", h["title"].lower())[:60]
-                if k not in seen:
-                    seen.add(k)
-                    headlines.append(h)
-        headlines = headlines[:14]
-        if config.llm_live() and headlines:
+        now = time.time()
+        notes: list[str] = []
+        if not _LIVE["pool"]:
+            cached = cache_get("news", "today", 180)
+            if cached:
+                _LIVE.update(pool=cached["headlines"], at=now)
+            elif not _LIVE["busy"]:
+                _LIVE["busy"] = True
+                try:
+                    batches = await asyncio.gather(*(nimble.news_search(q, "day", 7, "News Desk") for q in NEWS_QUERIES),
+                                                   return_exceptions=True)
+                    seen, headlines = set(), []
+                    for b in batches:
+                        if isinstance(b, Exception):
+                            notes.append(type(b).__name__)
+                            obs.capture(b)
+                            continue
+                        for h in b:
+                            if _news_key(h) not in seen:
+                                seen.add(_news_key(h))
+                                headlines.append(h)
+                    headlines = headlines[:14]
+                    notes += await _tag_headlines(headlines)
+                    _LIVE.update(pool=headlines, at=time.time(), turn=len(NEWS_QUERIES))
+                    if headlines:
+                        cache_put("news", "today", {"sample": False, "headlines": headlines, "notes": notes})
+                finally:
+                    _LIVE["busy"] = False
+        elif now - _LIVE["at"] >= NEWS_EVERY_S and not _LIVE["busy"]:
+            _LIVE.update(busy=True, at=now)
             try:
-                tags = await gemini.tag_news(headlines)
-                for t in tags.tags:
-                    if 0 <= t.index < len(headlines):
-                        ok = t.lat is not None and t.lng is not None and -90 <= t.lat <= 90 and -180 <= t.lng <= 180
-                        headlines[t.index].update({
-                            "place": t.place, "lat": t.lat if ok else None, "lng": t.lng if ok else None,
-                            "category": t.category, "wallet_impact": t.wallet_impact, "groceries": t.groceries[:3]})
+                beat = LIVE_BEATS[_LIVE["turn"] % len(LIVE_BEATS)]
+                _LIVE["turn"] += 1
+                found = await nimble.news_search(beat, "day", 6, "News Desk")
+                known = {_news_key(h) for h in _LIVE["pool"]}
+                fresh = [h for h in found if _news_key(h) not in known][:4]
+                if fresh:
+                    notes += await _tag_headlines(fresh)
+                    for h in fresh:
+                        h["fresh_at"] = now
+                    _LIVE["pool"] = (fresh + _LIVE["pool"])[:NEWS_POOL]
+                    cache_put("news", "today", {"sample": False, "headlines": _LIVE["pool"], "notes": notes})
+            except Exception as exc:  # the strip keeps what it has
+                obs.capture(exc)
+                notes.append(type(exc).__name__)
+            finally:
+                _LIVE["busy"] = False
+        return _personalize({"sample": False, "headlines": list(_LIVE["pool"]), "notes": notes, "updated": _LIVE["at"]})
+
+
+async def history(ticker: str) -> dict:
+    """About a year of closing prices for the "past year" chart, through OpenBB or yfinance."""
+    from . import market
+
+    ticker = re.sub(r"[^A-Za-z.\-]", "", ticker).upper()[:8]
+    with obs.agent_span("Market Data", f"Past year: {ticker}"):
+        if config.FORCE_DEMO:
+            rows = []
+            for i in range(260):
+                day = time.strftime("%Y-%m-%d", time.gmtime(time.time() - (259 - i) * 86400 * 1.4))
+                rows.append((day, 100 + i * 0.12 + 9 * math.sin(i / 17)))
+            return {**market.summarize(ticker, rows, "sample data"), "sample": True}
+        cached = cache_get("history", ticker, 6 * 3600)
+        if cached:
+            return cached
+        with obs.tool_span(f"{market.library() or 'market'}.price_history", {"ticker": ticker}, "Market Data",
+                           "Daily closing prices from an open-source market data library"):
+            try:
+                result = await market.history(ticker)
             except Exception as exc:
                 obs.capture(exc)
-                notes.append("Gemini tagging failed")
-        result = {"sample": False, "headlines": headlines, "notes": notes}
-        if headlines:
-            cache_put("news", "today", result)
-        return _personalize(result)
+                return {"available": True, "ticker": ticker, "points": [],
+                        "note": f"Price history could not be loaded just now ({type(exc).__name__})."}
+        if result.get("points"):
+            cache_put("history", ticker, result)
+        return result
 
 
 # -------------------------------------------------------------- Signal Scout

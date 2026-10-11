@@ -17,7 +17,7 @@ const link = (url, text) => {
 };
 
 const state = { status: null, home: null, world: [], news: [], story: null, trace: null, stores: [], activeItem: null,
-  atlas: null, layers: { food: true, routes: true, markets: true, news: true, events: true } };
+  atlas: null, layers: { food: true, routes: true, markets: true, news: true, events: true }, saved: [] };
 
 async function api(path, options) {
   const res = await fetch(path, options);
@@ -255,6 +255,9 @@ function showHeadline(h) {
   if ((h.in_your_basket || []).length) panel.append(el("p", "tip", `On your shopping list: ${h.in_your_basket.join(", ")}`));
   panel.append(choice("Check if it is true", "See who else reports it and whether an official source backs it up.", () => traceHeadline(h)));
   panel.append(choice("Learn from it", "A short lesson: why it matters, who it affects and what experts expect next.", () => showLesson(h)));
+  const keep = el("div", "story-actions");
+  keep.append(saveButton(h));
+  panel.append(keep);
 }
 function choice(title, text, fn) {
   const b = el("button", "choice");
@@ -308,6 +311,7 @@ function drawStatus() {
   };
   add("Prices and news", s.nimble === "live" ? "Nimble, reading the live web" : "Sample data (no Nimble key yet)", s.nimble === "live" ? "live" : "sample");
   add("Reading and explaining", ...aiLine(s));
+  add("Share price history", s.market_data === "openbb" ? "OpenBB, open-source market data" : s.market_data === "yfinance" ? "yfinance, open-source market data" : "Off. Install OpenBB to turn it on", s.market_data ? "live" : "");
   add("Watching for errors", s.sentry === "live" ? "Sentry, recording every step" : "Off (no Sentry key yet)", s.sentry === "live" ? "live" : "");
   $("#fineprint").textContent = s.nimble === "live"
     ? `Live shelf prices through Nimble (${s.stores.join(", ")}). Prices change; check the store before you buy.`
@@ -551,7 +555,10 @@ function drawStory(s) {
         const q = el("button", "mini", "Get a live quote");
         q.type = "button";
         q.addEventListener("click", () => getQuote(x, q, box));
-        actions.append(q);
+        const year = el("button", "mini", "See the past year");
+        year.type = "button";
+        year.addEventListener("click", () => getHistory(x, year, box));
+        actions.append(q, year);
       }
       const scout = el("button", "mini", "Scout its signals");
       scout.type = "button";
@@ -993,7 +1000,10 @@ function drawLesson(l, h) {
         const q = el("button", "mini", "See today's share price");
         q.type = "button";
         q.addEventListener("click", () => getQuote(x, q, box));
-        actions.append(q);
+        const year = el("button", "mini", "See the past year");
+        year.type = "button";
+        year.addEventListener("click", () => getHistory(x, year, box));
+        actions.append(q, year);
         box.append(actions);
       }
       panel.append(box);
@@ -1171,7 +1181,10 @@ function drawGuide(g) {
         const q = el("button", "mini", "See today's share price");
         q.type = "button";
         q.addEventListener("click", () => getQuote(x, q, box));
-        actions.append(q);
+        const year = el("button", "mini", "See the past year");
+        year.type = "button";
+        year.addEventListener("click", () => getHistory(x, year, box));
+        actions.append(q, year);
         box.append(actions);
       }
       panel.append(box);
@@ -1371,14 +1384,17 @@ function toast(h, ms = 30000) {
   setTimeout(close, ms);
 }
 
+let lastToast = 0;
 async function pollNews(first) {
   try {
     const res = await api("/api/news");
     drawNews(res);
     const fresh = (res.headlines || []).filter((h) => !seenNews.has(h.title));
     fresh.forEach((h) => seenNews.add(h.title));
-    // On load, announce the one that matters most; afterwards, anything new.
-    (first ? fresh.slice(0, 1) : fresh.slice(0, 3)).forEach((h) => toast(h));
+    // A pop-up for a story that touches your list; otherwise at most one every 90 seconds.
+    const mine = fresh.find((h) => (h.in_your_basket || []).length);
+    const pick = mine || (Date.now() - lastToast > 90000 ? fresh[0] : null);
+    if (pick) { lastToast = Date.now(); toast(pick); }
   } catch { if (first) drawNews({ headlines: [] }); }
 }
 
@@ -1435,29 +1451,190 @@ async function getQuote(x, button, box) {
   }
 }
 
+/* One year of closing prices as a small line, with the plain numbers under it. */
+async function getHistory(x, button, box) {
+  button.disabled = true; button.textContent = "Loading...";
+  try {
+    const h = await api(`/api/history?ticker=${encodeURIComponent(x.ticker.replace(/[^A-Za-z.-]/g, ""))}`);
+    const out = el("div", "history");
+    if ((h.points || []).length > 1) {
+      const W = 320, H = 64, pad = 4;
+      const values = h.points.map((p) => p.c);
+      const lo = Math.min(...values), hi = Math.max(...values);
+      const xy = values.map((v, i) => `${(pad + (i * (W - 2 * pad)) / (values.length - 1)).toFixed(1)},${(H - pad - ((v - lo) / (hi - lo || 1)) * (H - 2 * pad)).toFixed(1)}`);
+      const ns = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(ns, "svg");
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", `${h.ticker} closing price from ${h.from} to ${h.to}`);
+      const line = document.createElementNS(ns, "polyline");
+      line.setAttribute("points", xy.join(" "));
+      svg.append(line);
+      out.append(svg);
+      const up = h.change_pct >= 0;
+      out.append(el("p", null, `${h.ticker} closed at $${h.first} on ${h.from} and $${h.last} on ${h.to}: ${up ? "up" : "down"} ${Math.abs(h.change_pct)}% over the year. Highest $${h.high}, lowest $${h.low}.`));
+      out.append(el("p", "hint", `${h.sample ? "Sample numbers. " : ""}Source: ${h.source}. What a price did in the past does not tell you what it will do next.`));
+      button.textContent = "Past year shown";
+    } else {
+      out.append(el("p", "hint", h.note || "No price history available."));
+      button.disabled = false; button.textContent = "See the past year";
+    }
+    box.querySelector(".history")?.remove();
+    box.append(out);
+  } catch (err) {
+    button.disabled = false; button.textContent = "See the past year";
+    box.append(el("p", "error", err.message));
+  }
+}
+
 /* ------------------------------------------------------------------ wire */
+const cards = new Map(); // headline title -> its card in the strip
+
+function headlineCard(h) {
+  const li = el("li", "headline");
+  const mine = (h.in_your_basket || []).join(", ");
+  li.dataset.hit = mine;
+  li.style.setProperty("--cat", mine ? "#ffb224" : COLOR.news);
+  const title = el("button", "headline-title");
+  title.type = "button";
+  title.append(el("strong", null, h.title));
+  title.addEventListener("click", () => showHeadline(h));
+  li.append(title);
+  if (mine) li.append(el("em", "hit", `On your list: ${mine}`));
+  const row = el("div", "headline-acts");
+  const check = el("button", null, "Check it"); check.type = "button";
+  check.addEventListener("click", () => { if (h.lat != null) flyTo(h.lat, h.lng, 1.4); traceHeadline(h); });
+  const learn = el("button", null, "Learn from it"); learn.type = "button";
+  learn.addEventListener("click", () => showLesson(h));
+  row.append(check, learn, saveButton(h), el("span", null, h.source || ""));
+  li.append(row);
+  return li;
+}
+
+/* Keep the strip in step with the server without redrawing it: cards that are still current stay
+   where they are, and new ones enter just past the right edge so they roll into view next. */
 function drawNews(res) {
-  state.news = res.headlines || [];
+  const incoming = res.headlines || [];
+  const firstLoad = cards.size === 0;
+  state.news = incoming;
   const list = $("#headlines");
-  list.replaceChildren();
-  if (!state.news.length) { list.append(el("li", null, "No headlines right now.")); return; }
-  for (const h of state.news) {
-    const li = el("li", "headline");
-    li.style.setProperty("--cat", (h.in_your_basket || []).length ? "#ffb224" : COLOR.news);
-    const title = el("button", "headline-title");
+  if (!incoming.length) {
+    if (!list.children.length) list.append(el("li", "headline empty", "No headlines right now."));
+    return;
+  }
+  list.querySelector(".empty")?.remove();
+  const wanted = new Set(incoming.map((h) => h.title));
+  for (const [title, li] of cards) if (!wanted.has(title)) { li.remove(); cards.delete(title); }
+  const fresh = [];
+  for (const h of incoming) {
+    const old = cards.get(h.title);
+    if (old) {
+      if (old.dataset.hit !== (h.in_your_basket || []).join(", ")) { const li = headlineCard(h); old.replaceWith(li); cards.set(h.title, li); }
+      continue;
+    }
+    const li = headlineCard(h);
+    cards.set(h.title, li);
+    if (firstLoad) list.append(li); else fresh.push(li);
+  }
+  if (fresh.length) {
+    const edge = list.scrollLeft + list.clientWidth;
+    const after = [...list.children].find((c) => c.offsetLeft >= edge) || null;
+    for (const li of fresh) {
+      li.classList.add("fresh");
+      list.insertBefore(li, after);
+      setTimeout(() => li.classList.remove("fresh"), 30000);
+    }
+  }
+  $("#live-note").textContent = res.sample ? "sample stories" : `updated ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}`;
+  drawGlobe();
+}
+
+/* The strip drifts left on its own and loops. It stops while you point at it or tab into it. */
+function runTicker() {
+  const list = $("#headlines");
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  let paused = false, carry = 0, last = performance.now();
+  list.addEventListener("pointerenter", () => { paused = true; });
+  list.addEventListener("pointerleave", () => { paused = false; });
+  list.addEventListener("focusin", () => { paused = true; });
+  list.addEventListener("focusout", () => { paused = false; });
+  const tick = (now) => {
+    const dt = Math.min(now - last, 250);
+    last = now;
+    if (!paused && !document.hidden && list.children.length > 3 && list.scrollWidth > list.clientWidth + 40) {
+      carry += dt * 0.03; // 30 pixels a second
+      const px = Math.floor(carry);
+      if (px) {
+        carry -= px;
+        list.scrollLeft += px;
+        const first = list.firstElementChild;
+        const width = first.offsetWidth + 12;
+        if (list.scrollLeft >= width) { list.append(first); list.scrollLeft -= width; } // loop: the card that left re-enters at the end
+      }
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+/* ---------------------------------------------------------------- my list */
+const SAVE_KEY = "nibble.saved";
+const isSaved = (h) => state.saved.some((x) => x.title === h.title);
+
+function loadSaved() {
+  try { const v = JSON.parse(localStorage.getItem(SAVE_KEY) || "[]"); return Array.isArray(v) ? v.filter((x) => x && x.title) : []; } catch { return []; }
+}
+function storeSaved() {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(state.saved)); } catch { /* the list still works for this visit */ }
+  $("#saved-count").textContent = state.saved.length ? String(state.saved.length) : "";
+  document.querySelectorAll("button.save").forEach((b) => {
+    const on = state.saved.some((x) => x.title === b.dataset.title);
+    b.setAttribute("aria-pressed", String(on));
+    b.textContent = on ? "Saved" : "+ Save";
+  });
+}
+function saveButton(h) {
+  const b = el("button", "save", isSaved(h) ? "Saved" : "+ Save");
+  b.type = "button";
+  b.dataset.title = h.title;
+  b.setAttribute("aria-pressed", String(isSaved(h)));
+  b.title = "Keep this story in My list";
+  b.addEventListener("click", () => toggleSave(h));
+  return b;
+}
+function toggleSave(h) {
+  if (isSaved(h)) {
+    state.saved = state.saved.filter((x) => x.title !== h.title);
+  } else {
+    const keep = ["title", "url", "source", "published", "description", "place", "lat", "lng", "groceries", "wallet_impact", "in_your_basket"];
+    state.saved.unshift(Object.fromEntries(keep.filter((k) => h[k] != null).map((k) => [k, h[k]])));
+    state.saved = state.saved.slice(0, 30);
+  }
+  storeSaved();
+  // Show the list when nothing else is being read; otherwise the count on the button is the feedback.
+  if (["welcome", "saved", "news", "learn-hub", null].includes(state.activeItem)) showSaved();
+}
+function showSaved() {
+  state.story = null; state.trace = null;
+  const panel = openPanel("saved", "My list", state.saved.length ? "Stories you saved" : "Nothing saved yet");
+  if (!state.saved.length) {
+    panel.append(el("p", "summary", "Press + Save on any story in the news strip and it is kept here, even after you close the page."));
+    drawGlobe();
+    return;
+  }
+  for (const h of state.saved) {
+    const row = el("div", "saved-row");
+    const title = el("button", "saved-title", h.title);
     title.type = "button";
-    title.append(el("strong", null, h.title));
     title.addEventListener("click", () => showHeadline(h));
-    li.append(title);
-    if ((h.in_your_basket || []).length) li.append(el("em", "hit", `On your list: ${h.in_your_basket.join(", ")}`));
-    const row = el("div", "headline-acts");
-    const check = el("button", null, "Check it"); check.type = "button";
-    check.addEventListener("click", () => { if (h.lat != null) flyTo(h.lat, h.lng, 1.4); traceHeadline(h); });
-    const learn = el("button", null, "Learn from it"); learn.type = "button";
-    learn.addEventListener("click", () => showLesson(h));
-    row.append(check, learn, el("span", null, h.source || ""));
-    li.append(row);
-    list.append(li);
+    row.append(title);
+    if (h.source || h.wallet_impact) row.append(el("p", null, [h.source, h.wallet_impact].filter(Boolean).join(": ")));
+    actionRow(row, [
+      ["Check it", () => traceHeadline(h)],
+      ["Learn from it", () => showLesson(h)],
+      ["Remove", () => { toggleSave(h); if (state.activeItem === "saved") showSaved(); }],
+    ]);
+    panel.append(row);
   }
   drawGlobe();
 }
@@ -1550,6 +1727,9 @@ async function start() {
   $("#q-news").addEventListener("click", showNews);
   $("#q-learn").addEventListener("click", showLearn);
   $("#q-season").addEventListener("click", showSeason);
+  $("#q-saved").addEventListener("click", showSaved);
+  state.saved = loadSaved();
+  storeSaved();
   $("#home-btn").addEventListener("click", () => { showWelcome(); if (state.home) flyTo(state.home.lat, state.home.lng, 2.3); });
 
   drawLegend();
@@ -1558,7 +1738,8 @@ async function start() {
   refreshHome();
   pollWorld(true);
   pollNews(true);
-  setInterval(() => pollNews(false), 60000);
+  setInterval(() => pollNews(false), 30000);
+  runTicker();
   setInterval(() => pollWorld(false), 300000);
   refreshActivity();
   setInterval(refreshActivity, 4000);

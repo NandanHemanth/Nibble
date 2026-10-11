@@ -83,6 +83,18 @@ Before a demo:
   lookups use `include_domains` and `search_depth="standard"` to read only
   wire services, business press, regulators and statistics agencies, the
   pattern from Nimble's financial research cookbook.
+- **The news strip is live.** It drifts left on its own, loops, and stops
+  while you point at it. Every 30 seconds the page asks for news; the server
+  runs one more Nimble news search on the next beat (food, markets, shipping,
+  chips, oil, rates, housing, earnings, crops) and anything new enters from
+  the right, marked "New".
+- **My list.** "+ Save" on any story keeps it in My list (in this browser),
+  with Check it, Learn from it and Remove.
+- **Past year.** Beside each company with a ticker, "See the past year" draws
+  one year of closing prices. It uses [OpenBB](https://github.com/OpenBB-finance/OpenBB)
+  when installed (`.venv/bin/pip install openbb`), or yfinance on its own
+  (`.venv/bin/pip install yfinance`). Without either, the button says how to
+  add one.
 - **How it works** holds the service status and every agent step.
 
 ## The agents
@@ -217,6 +229,10 @@ Checked against the live Nimble API on 2026-10-11:
   combined path has been tested against the captured basics run and a
   stand-in model, not yet end to end with live keys.
 
+The OpenBB and yfinance calls were tested against stand-ins only; Yahoo's
+data service refused requests from the build machine. Wealthfolio is a desktop
+portfolio app with no library to call, so it is not integrated.
+
 The local-model path was tested against a stand-in for Ollama, not a real
 Ollama server. The lesson screen and the new globe layers were checked in a
 browser on sample data only.
@@ -250,6 +266,7 @@ app/pipelines.py     the agents
 app/nimble_tools.py  every Nimble call
 app/gemini.py        every model call: local model first, then Gemini
 app/atlas.py         fixed globe layers: food origins, shipping routes, markets
+app/market.py        past share prices through OpenBB or yfinance (optional)
 app/obs.py           Sentry spans and the activity log
 app/world.py         public feeds, ZIP and place lookup
 app/persona.py       stated preferences and learned habits (.nibble/persona.json)

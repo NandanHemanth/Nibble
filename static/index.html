@@ -27,6 +27,7 @@
       <button class="chip" id="q-news" type="button">Today's news</button>
       <button class="chip" id="q-learn" type="button">Learn investing</button>
       <button class="chip" id="q-season" type="button">In season now</button>
+      <button class="chip" id="q-saved" type="button">My list <b id="saved-count"></b></button>
       <button class="how" id="pulse" type="button" aria-expanded="false" aria-controls="activity"><i></i><span>How it works</span></button>
     </nav>
   </header>
@@ -67,7 +68,8 @@
 
   <footer class="wire">
     <div class="wire-head">
-      <h2>Today's news. Check a story, or learn from it.</h2>
+      <h2>Today's news</h2>
+      <p class="live"><i></i>Live <span id="live-note"></span></p>
       <div class="legend" id="legend" role="group" aria-label="Show or hide dots on the globe"></div>
     </div>
     <ol class="headlines" id="headlines"></ol>
